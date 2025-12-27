@@ -1,0 +1,27 @@
+---
+- name: Apache installation using docker
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+
+  tasks:
+    - name: Create Apache container
+      community.docker.docker_container:
+        name: webapp
+        image: httpd
+        ports:
+          - "80:80"
+

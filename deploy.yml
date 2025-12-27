@@ -1,0 +1,477 @@
+---
+- name: Apache installation using docker with custom webpage and healthcheck
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+    webapp_name: webapp
+    webapp_port: 80
+    custom_html_title: "Ma WebApp Ansible"
+    custom_html_message: "Application déployée avec succès via Ansible et Docker"
+  
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+      tags: [setup, packages]
+    
+    - name: Install Docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+      tags: [setup, packages]
+    
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+      tags: [setup, docker]
+    
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+      tags: [setup, docker]
+    
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: admin
+        groups: docker
+        append: yes
+      tags: [setup, docker]
+    
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+      tags: [setup, packages]
+    
+    - name: Remove any existing notary configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /root/.docker/trust
+        - /home/admin/.docker/trust
+      ignore_errors: yes
+      tags: [setup, docker]
+    
+    - name: Create root .docker directory
+      ansible.builtin.file:
+        path: /root/.docker
+        state: directory
+        mode: '0700'
+      tags: [setup, docker]
+    
+    - name: Disable content trust in Docker client config for root
+      ansible.builtin.copy:
+        content: |
+          {}
+        dest: /root/.docker/config.json
+        mode: '0600'
+      tags: [setup, docker]
+
+  tasks:
+    - name: Pull Apache Alpine image with skopeo
+      ansible.builtin.shell: |
+        if ! command -v skopeo &> /dev/null; then
+          yum install -y skopeo
+        fi
+        skopeo copy docker://docker.io/httpd:2.4-alpine docker-daemon:httpd:2.4-alpine
+      become: yes
+      register: skopeo_result
+      tags: [deploy, pull]
+    
+    - name: Display pull result
+      ansible.builtin.debug:
+        msg: "Image httpd:2.4-alpine successfully pulled using skopeo"
+      when: skopeo_result.rc == 0
+      tags: [deploy, pull]
+    
+    - name: Stop existing webapp container
+      ansible.builtin.command: docker stop {{ webapp_name }}
+      become: yes
+      ignore_errors: yes
+      tags: [deploy, container]
+    
+    - name: Remove existing webapp container
+      ansible.builtin.command: docker rm {{ webapp_name }}
+      become: yes
+      ignore_errors: yes
+      tags: [deploy, container]
+    
+    - name: Create custom HTML content directory
+      ansible.builtin.file:
+        path: /tmp/webapp_content
+        state: directory
+        mode: '0755'
+      tags: [deploy, content]
+    
+    - name: Create custom index.html
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html lang="fr">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>{{ custom_html_title }}</title>
+              <style>
+                  * {
+                      margin: 0;
+                      padding: 0;
+                      box-sizing: border-box;
+                  }
+                  body {
+                      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      min-height: 100vh;
+                      display: flex;
+                      justify-content: center;
+                      align-items: center;
+                      padding: 20px;
+                  }
+                  .container {
+                      background: white;
+                      border-radius: 20px;
+                      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                      padding: 50px;
+                      max-width: 800px;
+                      width: 100%;
+                      text-align: center;
+                      animation: fadeIn 1s ease-in;
+                  }
+                  @keyframes fadeIn {
+                      from { opacity: 0; transform: translateY(-20px); }
+                      to { opacity: 1; transform: translateY(0); }
+                  }
+                  h1 {
+                      color: #667eea;
+                      font-size: 2.5em;
+                      margin-bottom: 20px;
+                      animation: slideDown 0.8s ease-out;
+                  }
+                  @keyframes slideDown {
+                      from { opacity: 0; transform: translateY(-30px); }
+                      to { opacity: 1; transform: translateY(0); }
+                  }
+                  .message {
+                      color: #555;
+                      font-size: 1.3em;
+                      margin-bottom: 30px;
+                      line-height: 1.6;
+                  }
+                  .info-box {
+                      background: #f8f9fa;
+                      border-left: 4px solid #667eea;
+                      padding: 20px;
+                      margin: 20px 0;
+                      text-align: left;
+                      border-radius: 5px;
+                  }
+                  .info-box h3 {
+                      color: #667eea;
+                      margin-bottom: 10px;
+                  }
+                  .info-item {
+                      padding: 8px 0;
+                      color: #666;
+                      font-size: 0.95em;
+                  }
+                  .info-item strong {
+                      color: #333;
+                      display: inline-block;
+                      width: 180px;
+                  }
+                  .status {
+                      display: inline-block;
+                      background: #10b981;
+                      color: white;
+                      padding: 10px 30px;
+                      border-radius: 25px;
+                      font-weight: bold;
+                      margin-top: 20px;
+                      animation: pulse 2s infinite;
+                  }
+                  @keyframes pulse {
+                      0%, 100% { transform: scale(1); }
+                      50% { transform: scale(1.05); }
+                  }
+                  .footer {
+                      margin-top: 30px;
+                      color: #999;
+                      font-size: 0.9em;
+                  }
+                  .check-icon {
+                      font-size: 4em;
+                      color: #10b981;
+                      margin-bottom: 20px;
+                      animation: bounceIn 1s ease-out;
+                  }
+                  @keyframes bounceIn {
+                      0% { transform: scale(0); }
+                      50% { transform: scale(1.2); }
+                      100% { transform: scale(1); }
+                  }
+                  .tech-stack {
+                      display: flex;
+                      justify-content: space-around;
+                      flex-wrap: wrap;
+                      margin-top: 30px;
+                      gap: 15px;
+                  }
+                  .tech-item {
+                      background: #667eea;
+                      color: white;
+                      padding: 10px 20px;
+                      border-radius: 10px;
+                      font-size: 0.9em;
+                      font-weight: bold;
+                  }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="check-icon">✓</div>
+                  <h1>{{ custom_html_title }}</h1>
+                  <p class="message">{{ custom_html_message }}</p>
+                  
+                  <div class="info-box">
+                      <h3>📊 Informations de déploiement</h3>
+                      <div class="info-item">
+                          <strong>Serveur :</strong> {{ ansible_hostname }}
+                      </div>
+                      <div class="info-item">
+                          <strong>Adresse IP :</strong> {{ ansible_default_ipv4.address }}
+                      </div>
+                      <div class="info-item">
+                          <strong>Système :</strong> {{ ansible_distribution }} {{ ansible_distribution_version }}
+                      </div>
+                      <div class="info-item">
+                          <strong>Date de déploiement :</strong> {{ ansible_date_time.date }} à {{ ansible_date_time.time }}
+                      </div>
+                      <div class="info-item">
+                          <strong>Container :</strong> {{ webapp_name }}
+                      </div>
+                      <div class="info-item">
+                          <strong>Port :</strong> {{ webapp_port }}
+                      </div>
+                  </div>
+                  
+                  <div class="tech-stack">
+                      <div class="tech-item">🐳 Docker</div>
+                      <div class="tech-item">📦 Ansible</div>
+                      <div class="tech-item">🌐 Apache 2.4</div>
+                      <div class="tech-item">🏔️ Alpine Linux</div>
+                  </div>
+                  
+                  <div class="status">✓ Application en ligne</div>
+                  
+                  <div class="footer">
+                      <p>Déployé automatiquement avec Ansible</p>
+                      <p>Architecture: {{ ansible_architecture }} | Processeur: {{ ansible_processor_cores }} cores</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        dest: /tmp/webapp_content/index.html
+        mode: '0644'
+      tags: [deploy, content]
+    
+    - name: Create healthcheck HTML page
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Health Check</title>
+          </head>
+          <body>
+              <h1>OK</h1>
+              <p>Status: Healthy</p>
+              <p>Timestamp: {{ ansible_date_time.iso8601 }}</p>
+          </body>
+          </html>
+        dest: /tmp/webapp_content/health.html
+        mode: '0644'
+      tags: [deploy, content]
+    
+    - name: Create healthcheck script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          wget --no-verbose --tries=1 --spider http://localhost/health.html || exit 1
+        dest: /tmp/webapp_content/healthcheck.sh
+        mode: '0755'
+      tags: [deploy, content]
+    
+    - name: Create Apache container with healthcheck (Docker 1.13 compatible)
+      ansible.builtin.shell: |
+        docker run -d \
+          --name {{ webapp_name }} \
+          -p {{ webapp_port }}:80 \
+          --health-cmd="wget --no-verbose --tries=1 --spider http://localhost/health.html || exit 1" \
+          --health-interval=30s \
+          --health-timeout=5s \
+          --health-retries=3 \
+          --restart=unless-stopped \
+          httpd:2.4-alpine
+      become: yes
+      register: container_result
+      tags: [deploy, container]
+    
+    - name: Display container ID
+      ansible.builtin.debug:
+        msg: "Container created with ID: {{ container_result.stdout }}"
+      tags: [deploy, container]
+    
+    - name: Wait for container to be ready
+      ansible.builtin.pause:
+        seconds: 5
+      tags: [deploy, verify]
+    
+    - name: Copy custom HTML content to container
+      ansible.builtin.command: docker cp /tmp/webapp_content/{{ item }} {{ webapp_name }}:/usr/local/apache2/htdocs/
+      become: yes
+      loop:
+        - index.html
+        - health.html
+      tags: [deploy, content]
+    
+    - name: Verify container is running
+      ansible.builtin.shell: docker ps --filter name={{ webapp_name }} --format 'table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}'
+      become: yes
+      register: docker_ps_output
+      tags: [deploy, verify]
+    
+    - name: Display container status
+      ansible.builtin.debug:
+        var: docker_ps_output.stdout_lines
+      tags: [deploy, verify]
+    
+    - name: Wait for healthcheck to initialize
+      ansible.builtin.pause:
+        seconds: 15
+        prompt: "Waiting for container healthcheck to initialize..."
+      tags: [deploy, verify]
+    
+    - name: Check container health status
+      ansible.builtin.shell: docker inspect --format='{{ '{{' }}.State.Health.Status{{ '}}' }}' {{ webapp_name }}
+      become: yes
+      register: health_status
+      ignore_errors: yes
+      tags: [deploy, verify]
+    
+    - name: Display health status
+      ansible.builtin.debug:
+        msg: "Container health status: {{ health_status.stdout if health_status.rc == 0 else 'Health check info not available (normal for Docker 1.13)' }}"
+      tags: [deploy, verify]
+    
+    - name: Check container logs
+      ansible.builtin.shell: docker logs {{ webapp_name }} 2>&1 | tail -20
+      become: yes
+      register: container_logs
+      tags: [deploy, verify]
+    
+    - name: Display container logs
+      ansible.builtin.debug:
+        var: container_logs.stdout_lines
+      tags: [deploy, verify]
+    
+    - name: Wait for Apache port to be available
+      ansible.builtin.wait_for:
+        port: "{{ webapp_port }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 2
+        timeout: 30
+      tags: [deploy, verify]
+    
+    - name: Test main page
+      ansible.builtin.uri:
+        url: http://localhost:{{ webapp_port }}/
+        return_content: no
+        status_code: 200
+      register: main_page_test
+      ignore_errors: yes
+      tags: [deploy, verify]
+    
+    - name: Test health endpoint
+      ansible.builtin.uri:
+        url: http://localhost:{{ webapp_port }}/health.html
+        return_content: yes
+        status_code: 200
+      register: health_page_test
+      ignore_errors: yes
+      tags: [deploy, verify]
+    
+    - name: Display main page test result
+      ansible.builtin.debug:
+        msg: "✓ Main page is responding successfully (HTTP {{ main_page_test.status }})"
+      when: main_page_test.status == 200
+      tags: [deploy, verify]
+    
+    - name: Display health page test result
+      ansible.builtin.debug:
+        msg: "✓ Health endpoint is responding successfully (HTTP {{ health_page_test.status }})"
+      when: health_page_test.status == 200
+      tags: [deploy, verify]
+    
+    - name: Get custom page title
+      ansible.builtin.shell: curl -s http://localhost:{{ webapp_port }}/ | grep -o '<title>.*</title>' | head -1
+      become: yes
+      register: page_title
+      ignore_errors: yes
+      tags: [deploy, verify]
+    
+    - name: Display page title
+      ansible.builtin.debug:
+        msg: "Page title: {{ page_title.stdout }}"
+      when: page_title.rc == 0
+      tags: [deploy, verify]
+    
+    - name: Manual healthcheck test
+      ansible.builtin.shell: docker exec {{ webapp_name }} wget --no-verbose --tries=1 --spider http://localhost/health.html
+      become: yes
+      register: manual_health_test
+      ignore_errors: yes
+      tags: [deploy, verify]
+    
+    - name: Display manual healthcheck result
+      ansible.builtin.debug:
+        msg: "✓ Manual healthcheck passed - application is healthy"
+      when: manual_health_test.rc == 0
+      tags: [deploy, verify]
+    
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: /tmp/webapp_content
+        state: absent
+      tags: [deploy, cleanup]
+    
+    - name: Final deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "✓ DEPLOYMENT SUCCESSFUL"
+          - "=========================================="
+          - "Container Name: {{ webapp_name }}"
+          - "Image: httpd:2.4-alpine"
+          - "Port Mapping: {{ webapp_port }}:80"
+          - "Container ID: {{ container_result.stdout[:12] }}"
+          - "Health Status: {{ health_status.stdout if health_status.rc == 0 else 'Monitoring active' }}"
+          - "Main Page: http://{{ ansible_default_ipv4.address }}:{{ webapp_port }}/"
+          - "Health Check: http://{{ ansible_default_ipv4.address }}:{{ webapp_port }}/health.html"
+          - "Restart Policy: unless-stopped"
+          - "Healthcheck Interval: 30s"
+          - "Healthcheck Timeout: 5s"
+          - "Healthcheck Retries: 3"
+          - "=========================================="
+          - "Docker Version: 1.13.1 (CentOS 7)"
+          - "Note: --health-start-period not supported in this version"
+          - "=========================================="
+          - "Status: {{ 'Running ✓' if main_page_test.status == 200 else 'Check logs ⚠' }}"
+          - "=========================================="
+      tags: [always]

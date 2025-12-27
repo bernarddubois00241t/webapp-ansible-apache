@@ -1,0 +1,68 @@
+---
+- name: Apache installation using docker
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+  
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+    
+    - name: Install Docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+    
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+    
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: admin
+        groups: docker
+        append: yes
+    
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+
+  tasks:
+    - name: Pull Apache image without content trust
+      ansible.builtin.shell: |
+        DOCKER_CONTENT_TRUST=0 docker pull httpd:2.4
+      become: yes
+    
+    - name: Stop existing webapp container if exists
+      ansible.builtin.shell: docker stop webapp || true
+      become: yes
+    
+    - name: Remove existing webapp container if exists
+      ansible.builtin.shell: docker rm webapp || true
+      become: yes
+    
+    - name: Create and start Apache container
+      ansible.builtin.shell: |
+        DOCKER_CONTENT_TRUST=0 docker run -d --name webapp -p 80:80 httpd:2.4
+      become: yes
+    
+    - name: Verify container is running
+      ansible.builtin.command: docker ps -f name=webapp
+      become: yes
+      register: docker_ps_output
+    
+    - name: Display container status
+      ansible.builtin.debug:
+        var: docker_ps_output.stdout_lines

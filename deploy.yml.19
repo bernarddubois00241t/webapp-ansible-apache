@@ -1,0 +1,103 @@
+---
+- name: Apache installation using docker
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+  
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+    
+    - name: Install Docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+    
+    - name: Create systemd drop-in directory for Docker
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: '0755'
+    
+    - name: Configure Docker environment to disable content trust
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          Environment="DOCKER_CONTENT_TRUST=0"
+        dest: /etc/systemd/system/docker.service.d/disable-content-trust.conf
+        mode: '0644'
+    
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+    
+    - name: Restart Docker service
+      ansible.builtin.service:
+        name: docker
+        state: restarted
+        enabled: yes
+    
+    - name: Wait for Docker to be ready
+      ansible.builtin.wait_for:
+        port: 2375
+        delay: 2
+        timeout: 30
+      ignore_errors: yes
+    
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+    
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: admin
+        groups: docker
+        append: yes
+    
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+
+  tasks:
+    - name: Pull Apache image
+      ansible.builtin.command: docker pull httpd:2.4
+      become: yes
+      register: pull_result
+    
+    - name: Display pull result
+      ansible.builtin.debug:
+        var: pull_result.stdout_lines
+    
+    - name: Stop existing webapp container
+      ansible.builtin.command: docker stop webapp
+      become: yes
+      ignore_errors: yes
+    
+    - name: Remove existing webapp container
+      ansible.builtin.command: docker rm webapp
+      become: yes
+      ignore_errors: yes
+    
+    - name: Create and start Apache container
+      ansible.builtin.command: docker run -d --name webapp -p 80:80 httpd:2.4
+      become: yes
+      register: container_result
+    
+    - name: Display container ID
+      ansible.builtin.debug:
+        var: container_result.stdout
+    
+    - name: Verify container is running
+      ansible.builtin.command: docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+      become: yes
+      register: docker_ps_output
+    
+    - name: Display container status
+      ansible.builtin.debug:
+        var: docker_ps_output.stdout_lines

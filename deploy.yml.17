@@ -1,0 +1,75 @@
+---
+- name: Apache installation using docker
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+  
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+    
+    - name: Install Docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+    
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+    
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: admin
+        groups: docker
+        append: yes
+    
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+
+  tasks:
+    - name: Deploy Apache container (all in one)
+      ansible.builtin.shell: |
+        DOCKER_CONTENT_TRUST=0 docker pull httpd:2.4
+        docker stop webapp 2>/dev/null || true
+        docker rm webapp 2>/dev/null || true
+        DOCKER_CONTENT_TRUST=0 docker run -d --name webapp -p 80:80 httpd:2.4
+      become: yes
+      args:
+        executable: /bin/bash
+      register: deploy_result
+    
+    - name: Display deployment result
+      ansible.builtin.debug:
+        var: deploy_result.stdout_lines
+    
+    - name: Verify container is running
+      ansible.builtin.shell: docker ps --filter name=webapp
+      become: yes
+      register: container_status
+    
+    - name: Display container status
+      ansible.builtin.debug:
+        var: container_status.stdout_lines
+    
+    - name: Get container logs
+      ansible.builtin.shell: docker logs webapp 2>&1 | head -20
+      become: yes
+      register: container_logs
+      ignore_errors: yes
+    
+    - name: Display container logs
+      ansible.builtin.debug:
+        var: container_logs.stdout_lines

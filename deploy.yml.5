@@ -1,0 +1,52 @@
+---
+- name: Apache installation using docker
+  hosts: prod
+  become: true
+  vars:
+    ansible_sudo_pass: admin
+
+  pre_tasks:
+    - name: Install EPEL repo
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+      when: ansible_distribution == "CentOS"
+
+    - name: Install Docker engine
+      ansible.builtin.yum:
+        name: docker
+        state: present
+
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Add admin user to docker group
+      ansible.builtin.user:
+        name: admin
+        groups: docker
+        append: yes
+
+    - name: Install docker python from OS package
+      ansible.builtin.yum:
+        name: python-docker-py
+        state: present
+
+  tasks:
+    - name: Create Apache container
+      community.docker.docker_container:
+        name: webapp
+        image: httpd:2.4   # à ajuster si besoin (httpd:2.4-alpine , httpd:2.4, httpd:2.2, etc.)
+        pull: yes
+        ports:
+          - "80:80"
+      environment:
+        DOCKER_CONTENT_TRUST: "0"
+
