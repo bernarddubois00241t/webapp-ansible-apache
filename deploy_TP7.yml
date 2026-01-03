@@ -5,7 +5,7 @@
   vars:
     ansible_sudo_pass: admin
     webapp_name: webapp
-    webapp_port: 80
+    webapp_port: 8090
     custom_html_title: "Ma WebApp Ansible"
     custom_html_message: "Application déployée avec succès via Ansible et Docker"
   
@@ -21,11 +21,12 @@
         - git
       tags: [setup, packages]
     
-    - name: Install Docker engine
-      ansible.builtin.yum:
-        name: docker
-        state: present
-      tags: [setup, packages]
+    # A Supprimer/commenter
+    # - name: Install Docker engine
+    #  ansible.builtin.yum:
+    #    name: docker
+    #    state: present
+    #  tags: [setup, packages]
     
     - name: Enable and start Docker service
       ansible.builtin.service:
@@ -79,21 +80,34 @@
       tags: [setup, docker]
 
   tasks:
-    - name: Pull Apache Alpine image with skopeo
-      ansible.builtin.shell: |
-        if ! command -v skopeo &> /dev/null; then
-          yum install -y skopeo
-        fi
-        skopeo copy docker://docker.io/httpd:2.4-alpine docker-daemon:httpd:2.4-alpine
+    - name: Pull Apache Alpine image with docker
+      ansible.builtin.command: docker pull httpd:2.4-alpine
       become: yes
-      register: skopeo_result
+      register: docker_pull_result
+      changed_when: "'Downloaded newer image' in docker_pull_result.stdout"
       tags: [deploy, pull]
-    
+
     - name: Display pull result
       ansible.builtin.debug:
-        msg: "Image httpd:2.4-alpine successfully pulled using skopeo"
-      when: skopeo_result.rc == 0
+        msg: "Image httpd:2.4-alpine successfully pulled with docker"
+      when: docker_pull_result.rc == 0
       tags: [deploy, pull]
+
+    #- name: Pull Apache Alpine image with skopeo
+    #  ansible.builtin.shell: |
+    #    if ! command -v skopeo &> /dev/null; then
+    #      yum install -y skopeo
+    #    fi
+    #    skopeo copy docker://docker.io/httpd:2.4-alpine docker-daemon:httpd:2.4-alpine
+    #  become: yes
+    #  register: skopeo_result
+    #  tags: [deploy, pull]
+    
+    #- name: Display pull result
+    #  ansible.builtin.debug:
+    #    msg: "Image httpd:2.4-alpine successfully pulled using skopeo"
+    #  when: skopeo_result.rc == 0
+    #  tags: [deploy, pull]
     
     - name: Stop existing webapp container
       ansible.builtin.command: docker stop {{ webapp_name }}
@@ -319,7 +333,7 @@
         mode: '0644'
       tags: [deploy, pull]
  
-    - name: Create Apache container with healthcheck (Docker 1.13 compatible)
+    - name: Create Apache container with healthcheck 
       ansible.builtin.shell: |
         docker run -d \
           --name {{ webapp_name }} \
@@ -375,7 +389,7 @@
     
     - name: Display health status
       ansible.builtin.debug:
-        msg: "Container health status: {{ health_status.stdout if health_status.rc == 0 else 'Health check info not available (normal for Docker 1.13)' }}"
+        msg: "Container health status: {{ health_status.stdout if health_status.rc == 0 else 'Health check info not available' }}"
       tags: [deploy, verify]
     
     - name: Check container logs
@@ -458,7 +472,14 @@
         path: /tmp/webapp_content
         state: absent
       tags: [deploy, cleanup]
-    
+   
+    - name: Get Docker server version
+      ansible.builtin.shell: "docker version --format '{{'{{.Server.Version}}'}}'"
+      become: yes
+      register: docker_version
+      changed_when: false
+      tags: [deploy, verify]
+ 
     - name: Final deployment summary
       ansible.builtin.debug:
         msg:
@@ -477,7 +498,7 @@
           - "Healthcheck Timeout: 5s"
           - "Healthcheck Retries: 3"
           - "=========================================="
-          - "Docker Version: 1.13.1 (CentOS 7)"
+          - "Docker Version: {{ docker_version.stdout }}"
           - "Note: --health-start-period not supported in this version"
           - "=========================================="
           - "Status: {{ 'Running ✓' if main_page_test.status == 200 else 'Check logs ⚠' }}"
